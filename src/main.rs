@@ -20,6 +20,7 @@ mod config;
 mod errors;
 mod ews;
 mod graph;
+mod http;
 mod imap;
 mod message_id;
 mod mime;
@@ -32,7 +33,7 @@ mod smtp;
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 
-use config::ServerConfig;
+use config::{ServerConfig, Transport};
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 use tracing_subscriber::EnvFilter;
@@ -73,13 +74,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_writer(std::io::stderr)
         .init();
 
-    tracing::info!("starting MCP server transport=Stdio");
+    let transport = config::load_transport_config()?;
     let config = ServerConfig::load_from_env()?;
     let update_notice = check_for_updates().await;
-    let service = server::MailImapServer::new(config, update_notice)
-        .serve(stdio())
+
+    match transport.mode {
+        Transport::Stdio => {
+            tracing::info!("starting MCP server transport=Stdio");
+            let service = server::MailImapServer::new(config, update_notice)
+                .serve(stdio())
+                .await?;
+            service.waiting().await?;
+        }
+        Transport::Http => {
+            serve_http(config, update_notice, &transport).await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Serve the MCP server over Streamable HTTP on the configured socket.
+///
+/// Binds `transport.http_bind` and mounts the endpoint at `transport.http_path`.
+/// There is no built-in authentication, so a warning is logged whenever the
+/// bind address is not loopback — front such deployments with a reverse proxy
+/// that provides auth and TLS. Shuts down gracefully on Ctrl-C.
+async fn serve_http(
+    config: ServerConfig,
+    update_notice: Option<String>,
+    transport: &config::TransportConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bind = transport.http_bind;
+    let path = &transport.http_path;
+
+    if !bind.ip().is_loopback() {
+        tracing::warn!(
+            "HTTP transport bound to non-loopback address {bind} with no built-in \
+             authentication; anything that can reach this socket can access your \
+             mailboxes. Put it behind a reverse proxy for auth/TLS."
+        );
+    }
+
+    tracing::info!("starting MCP server transport=Http bind={bind} path={path}");
+
+    let router = http::build_router(config, update_notice, path);
+    let listener = tokio::net::TcpListener::bind(bind).await?;
+
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+            tracing::info!("shutdown signal received, stopping HTTP transport");
+        })
         .await?;
-    service.waiting().await?;
+
     Ok(())
 }
 
@@ -160,6 +208,14 @@ fn build_help_output(env_map: &BTreeMap<String, String>) -> String {
     out.push_str("Usage:\n");
     out.push_str("  mail-mcp\n");
     out.push_str("  mail-mcp --help\n\n");
+
+    out.push_str("Transport (optional)\n");
+    out.push_str("  MAIL_MCP_TRANSPORT   stdio | http   (default: stdio)\n");
+    out.push_str("  MAIL_MCP_HTTP_BIND   host:port       (default: 127.0.0.1:8080; http only)\n");
+    out.push_str("  MAIL_MCP_HTTP_PATH   URL path        (default: /mcp; http only)\n");
+    out.push_str(
+        "  HTTP mode has no built-in auth; bind to loopback or front it with a reverse proxy.\n\n",
+    );
 
     out.push_str("IMAP environment setup\n");
     out.push_str("  Required per account section MAIL_IMAP_<ACCOUNT>_:\n");

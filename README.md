@@ -542,6 +542,24 @@ Use `account_id` in tool calls: `"account_id": "gmail"`, `"account_id": "work"`,
 | `MAIL_IMAP_GREETING_TIMEOUT_MS` | 15000 | TLS/greeting timeout |
 | `MAIL_IMAP_SOCKET_TIMEOUT_MS` | 300000 | Socket I/O timeout |
 
+### Transport
+
+By default the server talks MCP over **stdio** — the process is spawned by the
+client. Set `MAIL_MCP_TRANSPORT=http` to instead serve **Streamable HTTP** on a
+bound TCP socket, which lets remote clients connect over the network.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAIL_MCP_TRANSPORT` | stdio | `stdio` or `http` |
+| `MAIL_MCP_HTTP_BIND` | 127.0.0.1:8080 | `host:port` the HTTP listener binds to (http only) |
+| `MAIL_MCP_HTTP_PATH` | /mcp | URL path the MCP endpoint is mounted at (http only) |
+
+> **Security:** HTTP mode has **no built-in authentication**. The default bind
+> address is loopback-only. If you bind to a non-loopback address (e.g.
+> `0.0.0.0:8080`), put the server behind a reverse proxy that provides
+> authentication and TLS — anything that can reach the socket can access your
+> mailboxes. A warning is logged at startup when bound to a non-loopback address.
+
 </details>
 
 ## Roadmap

@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::env::VarError;
+use std::net::SocketAddr;
 
 use regex::Regex;
 use secrecy::SecretString;
@@ -22,6 +23,37 @@ pub enum AuthMethod {
     Password,
     /// OAuth2 XOAUTH2 SASL mechanism
     OAuth2,
+}
+
+/// MCP transport the server should serve on.
+///
+/// Selected via `MAIL_MCP_TRANSPORT`; defaults to [`Transport::Stdio`] so that
+/// existing stdio-based client configurations continue to work unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    /// Serve over stdio (default). The process is spawned by an MCP client.
+    Stdio,
+    /// Serve over Streamable HTTP on a bound TCP socket.
+    Http,
+}
+
+/// Transport selection and HTTP listener settings.
+///
+/// Only [`Transport::Http`] consults `http_bind` and `http_path`; in stdio mode
+/// they hold their defaults and are ignored.
+#[derive(Debug, Clone)]
+pub struct TransportConfig {
+    /// Which transport to serve on.
+    pub mode: Transport,
+    /// Address the Streamable HTTP listener binds to (HTTP mode only).
+    ///
+    /// Defaults to `127.0.0.1:8080`. There is no built-in authentication, so
+    /// binding to a non-loopback address exposes the mailbox tools to anything
+    /// that can reach the socket — front it with a reverse proxy for auth/TLS.
+    pub http_bind: SocketAddr,
+    /// URL path the MCP endpoint is mounted at (HTTP mode only). Defaults to
+    /// `/mcp`. Must begin with `/`.
+    pub http_path: String,
 }
 
 /// IMAP account configuration
@@ -189,6 +221,33 @@ impl ServerConfig {
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
         })
+    }
+
+    /// Build a config with no accounts and inert global defaults.
+    ///
+    /// For tests that exercise transport/protocol wiring (e.g. the MCP
+    /// `initialize` handshake), which never touch account configuration.
+    #[cfg(test)]
+    pub(crate) fn empty_for_test() -> Self {
+        Self {
+            accounts: BTreeMap::new(),
+            oauth2_accounts: HashMap::new(),
+            graph_oauth2_accounts: HashMap::new(),
+            ews_accounts: HashMap::new(),
+            ews_oauth2_accounts: HashMap::new(),
+            smtp_accounts: HashMap::new(),
+            smtp_write_enabled: false,
+            smtp_save_sent: None,
+            smtp_connect_timeout_ms: 30_000,
+            smtp_send_timeout_ms: 300_000,
+            write_enabled: false,
+            connect_timeout_ms: 30_000,
+            greeting_timeout_ms: 15_000,
+            socket_timeout_ms: 300_000,
+            cursor_ttl_seconds: 600,
+            cursor_max_entries: 512,
+            attachment_download_dir: None,
+        }
     }
 
     /// Get IMAP account configuration by ID
@@ -741,14 +800,142 @@ fn resolve_smtp_send_timeout(new_var: Option<u64>, legacy_var: Option<u64>) -> u
     new_var.or(legacy_var).unwrap_or(300_000)
 }
 
+/// Default address the Streamable HTTP listener binds to when unset.
+const DEFAULT_HTTP_BIND: &str = "127.0.0.1:8080";
+/// Default URL path the MCP endpoint is mounted at when unset.
+const DEFAULT_HTTP_PATH: &str = "/mcp";
+
+/// Resolve transport configuration from already-read env values.
+///
+/// Kept pure (takes `Option<String>` rather than reading the environment) so it
+/// can be unit-tested without mutating process-global state, mirroring
+/// [`resolve_smtp_send_timeout`].
+///
+/// # Errors
+///
+/// Returns `InvalidInput` if `mode` is not `stdio`/`http`, if `bind` is not a
+/// valid `host:port` socket address, or if `path` does not start with `/`.
+fn resolve_transport_config(
+    mode: Option<String>,
+    bind: Option<String>,
+    path: Option<String>,
+) -> AppResult<TransportConfig> {
+    let mode = match mode.as_deref().map(str::trim) {
+        None | Some("") | Some("stdio") => Transport::Stdio,
+        Some(other) if other.eq_ignore_ascii_case("stdio") => Transport::Stdio,
+        Some(other) if other.eq_ignore_ascii_case("http") => Transport::Http,
+        Some(other) => {
+            return Err(AppError::InvalidInput(format!(
+                "invalid MAIL_MCP_TRANSPORT: '{other}' (expected 'stdio' or 'http')"
+            )));
+        }
+    };
+
+    let http_bind = match bind.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(raw) => raw.parse::<SocketAddr>().map_err(|_| {
+            AppError::InvalidInput(format!(
+                "invalid MAIL_MCP_HTTP_BIND: '{raw}' (expected 'host:port', e.g. '0.0.0.0:8080')"
+            ))
+        })?,
+        None => DEFAULT_HTTP_BIND
+            .parse()
+            .expect("DEFAULT_HTTP_BIND is a valid socket address"),
+    };
+
+    let http_path = match path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(raw) if raw.starts_with('/') => raw.to_owned(),
+        Some(raw) => {
+            return Err(AppError::InvalidInput(format!(
+                "invalid MAIL_MCP_HTTP_PATH: '{raw}' (must start with '/')"
+            )));
+        }
+        None => DEFAULT_HTTP_PATH.to_owned(),
+    };
+
+    Ok(TransportConfig {
+        mode,
+        http_bind,
+        http_path,
+    })
+}
+
+/// Load transport configuration from the environment.
+///
+/// Reads `MAIL_MCP_TRANSPORT`, `MAIL_MCP_HTTP_BIND`, and `MAIL_MCP_HTTP_PATH`.
+///
+/// # Errors
+///
+/// Propagates validation errors from [`resolve_transport_config`].
+pub fn load_transport_config() -> AppResult<TransportConfig> {
+    resolve_transport_config(
+        env::var("MAIL_MCP_TRANSPORT").ok(),
+        env::var("MAIL_MCP_HTTP_BIND").ok(),
+        env::var("MAIL_MCP_HTTP_PATH").ok(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        AuthMethod, ServerConfig, parse_bool_value, provider_auto_saves_sent,
-        resolve_smtp_send_timeout,
+        AuthMethod, ServerConfig, Transport, parse_bool_value, provider_auto_saves_sent,
+        resolve_smtp_send_timeout, resolve_transport_config,
     };
     use crate::smtp::{SmtpAccountConfig, SmtpSecurity};
     use std::collections::{BTreeMap, HashMap};
+    use std::net::SocketAddr;
+
+    #[test]
+    fn transport_defaults_to_stdio_when_unset() {
+        let cfg = resolve_transport_config(None, None, None).expect("defaults are valid");
+        assert_eq!(cfg.mode, Transport::Stdio);
+        assert_eq!(
+            cfg.http_bind,
+            "127.0.0.1:8080".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(cfg.http_path, "/mcp");
+    }
+
+    #[test]
+    fn transport_http_mode_parsed_case_insensitively() {
+        let cfg = resolve_transport_config(Some("HTTP".to_owned()), None, None).unwrap();
+        assert_eq!(cfg.mode, Transport::Http);
+    }
+
+    #[test]
+    fn transport_rejects_unknown_mode() {
+        let err = resolve_transport_config(Some("grpc".to_owned()), None, None).unwrap_err();
+        assert!(err.to_string().contains("MAIL_MCP_TRANSPORT"));
+    }
+
+    #[test]
+    fn transport_honors_custom_bind_and_path() {
+        let cfg = resolve_transport_config(
+            Some("http".to_owned()),
+            Some("0.0.0.0:9000".to_owned()),
+            Some("/rpc".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(cfg.http_bind, "0.0.0.0:9000".parse::<SocketAddr>().unwrap());
+        assert_eq!(cfg.http_path, "/rpc");
+    }
+
+    #[test]
+    fn transport_rejects_malformed_bind() {
+        let err = resolve_transport_config(
+            Some("http".to_owned()),
+            Some("not-an-addr".to_owned()),
+            None,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("MAIL_MCP_HTTP_BIND"));
+    }
+
+    #[test]
+    fn transport_rejects_path_without_leading_slash() {
+        let err = resolve_transport_config(Some("http".to_owned()), None, Some("rpc".to_owned()))
+            .unwrap_err();
+        assert!(err.to_string().contains("MAIL_MCP_HTTP_PATH"));
+    }
 
     /// Build a ServerConfig with one SMTP account at `host` whose per-account
     /// SAVE_SENT is `account_save_sent`, and a global `MAIL_SMTP_SAVE_SENT`
