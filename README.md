@@ -15,6 +15,32 @@
 
 Most email MCP servers only do IMAP reads. This one does **everything**: read, search, send, reply, forward, bulk operations, Microsoft Graph API, and Exchange Web Services — with real OAuth2, multi-account, and multi-provider support. Written in Rust for speed and safety.
 
+## What's New in v0.4.11
+
+Community bugfix release — both fixes came from external contributors. Thank you!
+
+- **Fixed: save-to-Sent silently failed on strict IMAP servers (iCloud and
+  others)** by [@dominikknafelj](https://github.com/dominikknafelj) in
+  [#26](https://github.com/tecnologicachile/mail-mcp/pull/26), reported in
+  [#25](https://github.com/tecnologicachile/mail-mcp/issues/25). The `\Seen`
+  flag introduced in v0.4.10 was sent without the RFC 3501 parenthesized
+  flag-list syntax (`APPEND "Sent" \Seen …` instead of `APPEND "Sent" (\Seen) …`),
+  because `async-imap` interpolates the flags argument verbatim. Strict servers
+  rejected the APPEND and the sent copy was lost — while the tool still reported
+  `status: ok`. Flags are now normalized before hitting the wire, and
+  `smtp_send_message` / `smtp_reply_message` / `smtp_forward_message` responses
+  include a new `saved_to_sent` field (`true`/`false`, or `null` when saving is
+  disabled) so callers can detect archival failures.
+  [@tordable](https://github.com/tordable) diagnosed and fixed the same root
+  cause concurrently in [#24](https://github.com/tecnologicachile/mail-mcp/pull/24).
+- **Fixed: message reads returned empty on iCloud** by
+  [@tdabasinskas](https://github.com/tdabasinskas) in
+  [#23](https://github.com/tecnologicachile/mail-mcp/pull/23). Raw message
+  fetches used the deprecated `RFC822` item, which iCloud accepts but leaves
+  unpopulated. Fetches now use the IMAP4rev1 `BODY[]` item — same `\Seen`
+  semantics, works everywhere — with a mock-server regression test pinning the
+  wire format.
+
 ## What's New in v0.4.10
 
 Community release — all three changes came from external contributors. Thank you!
