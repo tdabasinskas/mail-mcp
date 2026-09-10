@@ -1840,10 +1840,20 @@ mod tests {
         assert_eq!(normalize_append_flags(Some("")), None);
     }
 
+    /// Mailbox and message body the fake APPEND server expects to see on the
+    /// wire.
+    const APPEND_MAILBOX: &str = "Sent Messages";
+    const APPEND_CONTENT: &[u8] = b"body content";
+
     /// Spins up a fake plaintext IMAP server, performs LOGIN followed by
     /// `append()` with the given `flags`, and returns the exact APPEND
     /// command line as sent on the wire so callers can assert on its
     /// literal format (parenthesized flags, no flags argument, etc).
+    ///
+    /// Also asserts the parts of the exchange that don't depend on `flags`,
+    /// so every caller inherits them: the mailbox reaches the wire quoted and
+    /// unmodified, the announced literal length matches the message body, and
+    /// that body arrives byte-for-byte followed by CRLF.
     async fn capture_append_command_line(flags_in: Option<&'static str>) -> String {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -1864,6 +1874,13 @@ mod tests {
 
             let append_command = read_imap_command(&mut stream).await;
 
+            // Callers only assert on the flags substring, so pin the mailbox
+            // here: it must reach the wire quoted and exactly as passed in.
+            assert!(
+                append_command.contains(&format!(" APPEND \"{APPEND_MAILBOX}\" ")),
+                "APPEND must target the caller's mailbox, quoted; got {append_command:?}"
+            );
+
             // The command line ends with a literal byte count, e.g.
             // `... {9}\r\n` — parse it so we know how many bytes (plus the
             // trailing CRLF the client sends after the literal) to drain
@@ -1874,6 +1891,11 @@ mod tests {
                 .and_then(|s| s.trim_end().strip_suffix('}'))
                 .and_then(|s| s.parse().ok())
                 .expect("APPEND command should announce a literal length");
+            assert_eq!(
+                literal_len,
+                APPEND_CONTENT.len(),
+                "APPEND must announce the message's exact byte count; got {append_command:?}"
+            );
 
             stream
                 .get_mut()
@@ -1881,11 +1903,21 @@ mod tests {
                 .await
                 .expect("test server should send literal continuation");
 
-            let mut content = vec![0u8; literal_len + 2];
+            let mut literal = vec![0u8; literal_len + 2];
             stream
-                .read_exact(&mut content)
+                .read_exact(&mut literal)
                 .await
                 .expect("test server should read literal content plus trailing CRLF");
+            assert_eq!(
+                &literal[..literal_len],
+                APPEND_CONTENT,
+                "the message literal must arrive byte-for-byte"
+            );
+            assert_eq!(
+                &literal[literal_len..],
+                b"\r\n",
+                "the message literal must be followed by CRLF"
+            );
 
             let tag = append_command
                 .split_whitespace()
@@ -1915,9 +1947,9 @@ mod tests {
         append(
             &config,
             &mut session,
-            "Sent Messages",
+            APPEND_MAILBOX,
             flags_in,
-            b"body content",
+            APPEND_CONTENT,
         )
         .await
         .expect("APPEND should succeed");
