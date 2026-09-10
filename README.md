@@ -15,6 +15,29 @@
 
 Most email MCP servers only do IMAP reads. This one does **everything**: read, search, send, reply, forward, bulk operations, Microsoft Graph API, and Exchange Web Services — with real OAuth2, multi-account, and multi-provider support. Written in Rust for speed and safety.
 
+## What's New in v0.4.12
+
+Community release — both changes came from external contributors. Thank you!
+
+- **iCloud mailbox aliases + reads no longer mark messages as read** by
+  [@felipefdl](https://github.com/felipefdl) in
+  [#16](https://github.com/tecnologicachile/mail-mcp/pull/16). Short mailbox
+  names now resolve to each provider's real folder (`Sent` → `Sent Messages`
+  on iCloud / `[Gmail]/Sent Mail` on Gmail, `Trash` → `Deleted Messages`, and
+  so on, multi-language) in search, copy, and move. Raw message fetches now use
+  `BODY.PEEK[]`, so reading a message through the MCP no longer sets `\Seen`
+  as a side effect — with a `BODY[]` fallback for servers that reject `PEEK`
+  (the deprecated `RFC822` item, removed in #23, stays out). Validated against
+  a real iCloud mailbox by the author; includes alias-resolution tests and
+  iCloud setup docs.
+- **Optimized multi-stage Dockerfile + docker-compose** by
+  [@monssefbaakka](https://github.com/monssefbaakka) in
+  [#5](https://github.com/tecnologicachile/mail-mcp/pull/5). cargo-chef layer
+  caching, TARGETARCH-aware musl cross-builds (amd64/arm64), and a `scratch`
+  runtime image — 16.9 MB, down from 25.5 MB — verified to respond to MCP
+  initialize/tools-list over stdio. The toolchain pin was bumped to
+  Rust 1.90 (the codebase's let-chains require >= 1.88).
+
 ## What's New in v0.4.11
 
 Community bugfix release — both fixes came from external contributors. Thank you!
