@@ -15,6 +15,26 @@
 
 Most email MCP servers only do IMAP reads. This one does **everything**: read, search, send, reply, forward, bulk operations, Microsoft Graph API, and Exchange Web Services — with real OAuth2, multi-account, and multi-provider support. Written in Rust for speed and safety.
 
+## What's New in v0.4.13
+
+- **`effective_from()` helper + `FROM_EMAIL` startup validation** by
+  [@arwack](https://github.com/arwack) in
+  [#29](https://github.com/tecnologicachile/mail-mcp/pull/29) — the follow-up
+  to their #19. The `from_email` → `user` fallback now lives in one place
+  (`SmtpAccountConfig::effective_from()`), and `MAIL_SMTP_<ID>_FROM_EMAIL` is
+  validated when the server starts instead of failing on the first send.
+- **Behavior change — read before upgrading:** a malformed `FROM_EMAIL`
+  (multiple `@`, whitespace, empty local part, or a domain without a dot) now
+  prevents the server from starting, for **all** accounts. Note that dotless
+  domains such as `user@localhost` or `alerts@intranet` are currently rejected
+  too; if you use an internal relay address like that, hold the upgrade — a
+  follow-up relaxing the dot rule is under discussion in #29.
+- Hardened APPEND wire-format tests by
+  [@tordable](https://github.com/tordable) in
+  [#28](https://github.com/tecnologicachile/mail-mcp/pull/28): mailbox
+  quoting, announced literal length, and byte-for-byte payload are now
+  asserted for every append test.
+
 ## What's New in v0.4.12
 
 Community release — both changes came from external contributors. Thank you!
