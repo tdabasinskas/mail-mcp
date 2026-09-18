@@ -90,6 +90,17 @@ pub struct SmtpAccountConfig {
     pub from_email: Option<String>,
 }
 
+impl SmtpAccountConfig {
+    /// Effective From (sender) / Reply-to-self address.
+    ///
+    /// Returns `from_email` when set, otherwise falls back to `user` (the
+    /// SMTP auth username). Centralises the fallback that was previously
+    /// repeated at every call site (send, reply, reply-all, forward).
+    pub fn effective_from(&self) -> &str {
+        self.from_email.as_deref().unwrap_or(&self.user)
+    }
+}
+
 // ─── Email composition ───────────────────────────────────────────────────────
 
 /// A file attachment for an email
