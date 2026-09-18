@@ -534,7 +534,18 @@ fn load_smtp_accounts(
         let save_sent = parse_opt_bool_env(&format!("{prefix}SAVE_SENT"))?;
 
         let from_email = match env::var(format!("{prefix}FROM_EMAIL")) {
-            Ok(v) if !v.trim().is_empty() => Some(v.trim().to_owned()),
+            Ok(v) => {
+                let v = v.trim();
+                if v.is_empty() {
+                    None
+                } else if !is_valid_email(v) {
+                    return Err(AppError::InvalidInput(format!(
+                        "SMTP account '{account_id}': {prefix}FROM_EMAIL='{v}' is not a valid email address"
+                    )));
+                } else {
+                    Some(v.to_owned())
+                }
+            }
             _ => None,
         };
 
@@ -565,6 +576,24 @@ fn required_smtp_env(key: &str, account_id: &str) -> AppResult<String> {
             "SMTP account '{account_id}' is missing {key}"
         ))),
     }
+}
+
+/// Lightweight format check for a `FROM_EMAIL` value.
+///
+/// Rejects obviously malformed addresses (missing `@`, embedded whitespace,
+/// no dot in the domain, empty local part, multiple `@`) at startup so a
+/// typo doesn't surface only on the first send. Intentionally permissive on
+/// everything else — this is a sanity gate, not an RFC 5322 validator.
+fn is_valid_email(value: &str) -> bool {
+    let at = value.matches('@').count();
+    if at != 1 {
+        return false;
+    }
+    let (local, domain) = value.split_once('@').unwrap();
+    !local.is_empty()
+        && !domain.is_empty()
+        && domain.contains('.')
+        && !value.contains(char::is_whitespace)
 }
 
 /// Read a required OAuth2 environment variable, with a clear error message.
@@ -744,7 +773,7 @@ fn resolve_smtp_send_timeout(new_var: Option<u64>, legacy_var: Option<u64>) -> u
 #[cfg(test)]
 mod tests {
     use super::{
-        AuthMethod, ServerConfig, parse_bool_value, provider_auto_saves_sent,
+        AuthMethod, ServerConfig, is_valid_email, parse_bool_value, provider_auto_saves_sent,
         resolve_smtp_send_timeout,
     };
     use crate::smtp::{SmtpAccountConfig, SmtpSecurity};
@@ -884,5 +913,45 @@ mod tests {
     #[test]
     fn smtp_send_timeout_uses_new_var_when_only_new_var_set() {
         assert_eq!(resolve_smtp_send_timeout(Some(45_000), None), 45_000);
+    }
+
+    #[test]
+    fn is_valid_email_accepts_well_formed_addresses() {
+        assert!(is_valid_email("user@example.com"));
+        assert!(is_valid_email("alice.bob@example.org"));
+        assert!(is_valid_email("team@company.com"));
+        assert!(is_valid_email("a.b.c@sub.domain.example.org"));
+        assert!(is_valid_email("user+tag@gmail.com"));
+    }
+
+    #[test]
+    fn is_valid_email_rejects_missing_at_sign() {
+        assert!(!is_valid_email("userexample.com"));
+        assert!(!is_valid_email("alice.bobexample.org"));
+    }
+
+    #[test]
+    fn is_valid_email_rejects_multiple_at_signs() {
+        assert!(!is_valid_email("user@name@example.com"));
+        assert!(!is_valid_email("@@example.com"));
+    }
+
+    #[test]
+    fn is_valid_email_rejects_whitespace() {
+        assert!(!is_valid_email("user @example.com"));
+        assert!(!is_valid_email("user@ example.com"));
+        assert!(!is_valid_email("user@example.com "));
+    }
+
+    #[test]
+    fn is_valid_email_rejects_missing_domain_dot() {
+        assert!(!is_valid_email("user@localhost"));
+        assert!(!is_valid_email("user@example"));
+    }
+
+    #[test]
+    fn is_valid_email_rejects_empty_local_part() {
+        assert!(!is_valid_email("@example.com"));
+        assert!(!is_valid_email(""));
     }
 }
