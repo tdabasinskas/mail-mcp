@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::env::VarError;
+use std::path::PathBuf;
 
 use regex::Regex;
 use secrecy::SecretString;
@@ -105,6 +106,10 @@ pub struct ServerConfig {
     /// attachments. `None` = fall back to the system temp dir. A per-call
     /// `output_dir` argument overrides this.
     pub attachment_download_dir: Option<String>,
+    /// Directory that outbound `file_path` attachments must live under
+    /// (canonicalized at startup). `None` = no restriction, any readable
+    /// file may be attached.
+    pub attachment_upload_dir: Option<PathBuf>,
 }
 
 impl ServerConfig {
@@ -188,6 +193,9 @@ impl ServerConfig {
             attachment_download_dir: env::var("MAIL_ATTACHMENT_DOWNLOAD_DIR")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
+            attachment_upload_dir: parse_upload_dir(
+                env::var("MAIL_ATTACHMENT_UPLOAD_DIR").ok().as_deref(),
+            )?,
         })
     }
 
@@ -656,6 +664,33 @@ fn parse_bool_env(key: &str, default: bool) -> AppResult<bool> {
     }
 }
 
+/// Parse and canonicalize `MAIL_ATTACHMENT_UPLOAD_DIR`
+///
+/// Canonicalizing once at startup resolves symlinks (e.g. macOS
+/// `/tmp` -> `/private/tmp`) so per-call containment checks compare real
+/// paths.
+///
+/// # Errors
+///
+/// Returns `InvalidInput` if the value is set but does not name an existing
+/// directory.
+fn parse_upload_dir(value: Option<&str>) -> AppResult<Option<PathBuf>> {
+    let Some(raw) = value.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    let dir = std::fs::canonicalize(raw).map_err(|e| {
+        AppError::InvalidInput(format!(
+            "MAIL_ATTACHMENT_UPLOAD_DIR '{raw}' is not usable: {e}"
+        ))
+    })?;
+    if !dir.is_dir() {
+        return Err(AppError::InvalidInput(format!(
+            "MAIL_ATTACHMENT_UPLOAD_DIR '{raw}' is not a directory"
+        )));
+    }
+    Ok(Some(dir))
+}
+
 fn parse_bool_value(value: &str) -> Option<bool> {
     match value.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "y" | "on" => Some(true),
@@ -773,8 +808,8 @@ fn resolve_smtp_send_timeout(new_var: Option<u64>, legacy_var: Option<u64>) -> u
 #[cfg(test)]
 mod tests {
     use super::{
-        AuthMethod, ServerConfig, is_valid_email, parse_bool_value, provider_auto_saves_sent,
-        resolve_smtp_send_timeout,
+        AuthMethod, ServerConfig, is_valid_email, parse_bool_value, parse_upload_dir,
+        provider_auto_saves_sent, resolve_smtp_send_timeout,
     };
     use crate::smtp::{SmtpAccountConfig, SmtpSecurity};
     use std::collections::{BTreeMap, HashMap};
@@ -821,6 +856,7 @@ mod tests {
             cursor_ttl_seconds: 600,
             cursor_max_entries: 512,
             attachment_download_dir: None,
+            attachment_upload_dir: None,
         }
     }
 
@@ -870,6 +906,28 @@ mod tests {
     #[test]
     fn should_save_sent_unknown_account_is_false() {
         assert!(!cfg_with_smtp("smtp.zoho.com", None, None).should_save_sent("nonexistent"));
+    }
+
+    #[test]
+    fn upload_dir_unset_or_blank_means_unrestricted() {
+        assert_eq!(parse_upload_dir(None).unwrap(), None);
+        assert_eq!(parse_upload_dir(Some("  ")).unwrap(), None);
+    }
+
+    #[test]
+    fn upload_dir_is_canonicalized() {
+        let tmp = std::env::temp_dir();
+        let dir = parse_upload_dir(tmp.to_str()).unwrap().unwrap();
+        assert_eq!(dir, std::fs::canonicalize(&tmp).unwrap());
+    }
+
+    #[test]
+    fn upload_dir_rejects_missing_and_non_directory_paths() {
+        assert!(parse_upload_dir(Some("/definitely/not/a/real/dir")).is_err());
+        let file = std::env::temp_dir().join(format!("upload-dir-file-{}", uuid::Uuid::new_v4()));
+        std::fs::write(&file, b"x").unwrap();
+        assert!(parse_upload_dir(file.to_str()).is_err());
+        std::fs::remove_file(&file).unwrap();
     }
 
     #[test]

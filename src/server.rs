@@ -3,7 +3,7 @@
 //! Implements the `ServerHandler` trait and registers 19 MCP tools. Handles
 //! input validation, business logic orchestration, and response formatting.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -3060,7 +3060,10 @@ impl MailImapServer {
         }
 
         let smtp_config = self.config.get_smtp_account(&input.account_id)?;
-        let attachments = decode_attachments(&input.attachments)?;
+        let attachments = decode_attachments(
+            &input.attachments,
+            self.config.attachment_upload_dir.as_deref(),
+        )?;
 
         let from_addr = smtp_config.effective_from().to_owned();
 
@@ -3207,7 +3210,10 @@ impl MailImapServer {
         };
 
         // Collect attachments: original email's + any new ones
-        let mut attachments = decode_attachments(&input.attachments)?;
+        let mut attachments = decode_attachments(
+            &input.attachments,
+            self.config.attachment_upload_dir.as_deref(),
+        )?;
         if input.include_original_attachments {
             let original_attachments = extract_attachments_from_message(&parsed);
             attachments.extend(original_attachments);
@@ -3465,7 +3471,8 @@ impl MailImapServer {
             attachments: {
                 let mut atts = Vec::new();
                 for a in &input.attachments {
-                    let (b64, fname) = resolve_attachment_base64(a)?;
+                    let (b64, fname) =
+                        resolve_attachment_base64(a, self.config.attachment_upload_dir.as_deref())?;
                     let filename = a.filename.clone().unwrap_or(fname);
                     let content_type = a
                         .content_type
@@ -4213,21 +4220,17 @@ fn extract_attachments_recursive(
 }
 
 /// Decode base64 attachment inputs into raw bytes for SMTP
-fn decode_attachments(inputs: &[AttachmentInput]) -> AppResult<Vec<smtp::EmailAttachment>> {
+fn decode_attachments(
+    inputs: &[AttachmentInput],
+    upload_dir: Option<&Path>,
+) -> AppResult<Vec<smtp::EmailAttachment>> {
     use base64::Engine;
     inputs
         .iter()
         .map(|a| {
             // Read content from file_path or decode base64
             let (content, resolved_filename) = if let Some(ref path) = a.file_path {
-                let content = std::fs::read(path).map_err(|e| {
-                    AppError::InvalidInput(format!("cannot read attachment file '{}': {e}", path))
-                })?;
-                let fname = std::path::Path::new(path)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "attachment".to_owned());
-                (content, fname)
+                read_attachment_file(path, upload_dir)?
             } else if let Some(ref b64) = a.content_base64 {
                 let content = base64::engine::general_purpose::STANDARD
                     .decode(b64)
@@ -4266,18 +4269,45 @@ fn decode_attachments(inputs: &[AttachmentInput]) -> AppResult<Vec<smtp::EmailAt
         .collect()
 }
 
+/// Read a local file for an outbound attachment. Returns (bytes, filename).
+///
+/// When `upload_dir` is set (from `MAIL_ATTACHMENT_UPLOAD_DIR`, already
+/// canonical), the path is canonicalized — resolving `..` and symlinks — and
+/// must land inside that directory. This stops a prompt-injected model from
+/// attaching files like `~/.ssh/id_rsa`. Missing and out-of-scope files get
+/// the same error so the check can't be used to probe for file existence.
+fn read_attachment_file(path: &str, upload_dir: Option<&Path>) -> AppResult<(Vec<u8>, String)> {
+    let read_path = match upload_dir {
+        None => std::path::PathBuf::from(path),
+        Some(dir) => std::fs::canonicalize(path)
+            .ok()
+            .filter(|p| p.starts_with(dir) && p.is_file())
+            .ok_or_else(|| {
+                AppError::InvalidInput(format!(
+                    "attachment file '{path}' not found or outside MAIL_ATTACHMENT_UPLOAD_DIR ({})",
+                    dir.display()
+                ))
+            })?,
+    };
+    let content = std::fs::read(&read_path).map_err(|e| {
+        AppError::InvalidInput(format!("cannot read attachment file '{path}': {e}"))
+    })?;
+    let fname = read_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "attachment".to_owned());
+    Ok((content, fname))
+}
+
 /// Resolve attachment to base64 string (for Graph API). Returns (base64, filename).
-fn resolve_attachment_base64(a: &AttachmentInput) -> AppResult<(String, String)> {
+fn resolve_attachment_base64(
+    a: &AttachmentInput,
+    upload_dir: Option<&Path>,
+) -> AppResult<(String, String)> {
     use base64::Engine;
     if let Some(ref path) = a.file_path {
-        let content = std::fs::read(path).map_err(|e| {
-            AppError::InvalidInput(format!("cannot read attachment file '{}': {e}", path))
-        })?;
+        let (content, fname) = read_attachment_file(path, upload_dir)?;
         let b64 = base64::engine::general_purpose::STANDARD.encode(&content);
-        let fname = std::path::Path::new(path)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "attachment".to_owned());
         Ok((b64, fname))
     } else if let Some(ref b64) = a.content_base64 {
         Ok((
@@ -4530,9 +4560,9 @@ fn parse_bulk_message_ids(account_id: &str, message_ids: &[String]) -> AppResult
 /// Tests for server-side validation and encoding helpers.
 mod tests {
     use super::{
-        encode_raw_source_base64, escape_imap_quoted, sanitize_attachment_filename,
-        select_attachment, validate_email_no_wrapper_leak, validate_flag, validate_mailbox,
-        validate_search_text,
+        encode_raw_source_base64, escape_imap_quoted, read_attachment_file,
+        sanitize_attachment_filename, select_attachment, validate_email_no_wrapper_leak,
+        validate_flag, validate_mailbox, validate_search_text,
     };
     use crate::imap::is_sent_folder_name;
     use crate::mime::ExtractedAttachment;
@@ -4561,6 +4591,72 @@ mod tests {
         // no match returns None.
         assert!(select_attachment(&atts, Some("9.9"), None).is_none());
         assert!(select_attachment(&atts, None, Some("missing.txt")).is_none());
+    }
+
+    /// Fresh temp tree: <root>/allowed/ok.txt and <root>/secret.txt.
+    /// Returns (root, canonical allowed dir).
+    fn upload_fixture() -> (std::path::PathBuf, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!("upload-dir-{}", uuid::Uuid::new_v4()));
+        let allowed = root.join("allowed");
+        std::fs::create_dir_all(&allowed).unwrap();
+        std::fs::write(allowed.join("ok.txt"), b"fine").unwrap();
+        std::fs::write(root.join("secret.txt"), b"secret").unwrap();
+        let allowed = std::fs::canonicalize(&allowed).unwrap();
+        (root, allowed)
+    }
+
+    #[test]
+    fn upload_dir_allows_files_inside() {
+        let (root, allowed) = upload_fixture();
+        let path = allowed.join("ok.txt");
+        let (bytes, name) = read_attachment_file(path.to_str().unwrap(), Some(&allowed)).unwrap();
+        assert_eq!(bytes, b"fine");
+        assert_eq!(name, "ok.txt");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn upload_dir_blocks_outside_traversal_and_missing_with_same_error() {
+        let (root, allowed) = upload_fixture();
+        let outside = root.join("secret.txt");
+        let traversal = allowed.join("../secret.txt");
+        let missing = allowed.join("nope.txt");
+        for path in [&outside, &traversal, &missing] {
+            let err = read_attachment_file(path.to_str().unwrap(), Some(&allowed)).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("not found or outside MAIL_ATTACHMENT_UPLOAD_DIR"),
+                "{}: {err}",
+                path.display()
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn upload_dir_blocks_symlink_escaping_the_dir() {
+        let (root, allowed) = upload_fixture();
+        let link = allowed.join("link.txt");
+        std::os::unix::fs::symlink(root.join("secret.txt"), &link).unwrap();
+        assert!(read_attachment_file(link.to_str().unwrap(), Some(&allowed)).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn upload_dir_rejects_directories() {
+        let (root, allowed) = upload_fixture();
+        assert!(read_attachment_file(allowed.to_str().unwrap(), Some(&allowed)).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn no_upload_dir_keeps_unrestricted_behavior() {
+        let (root, _allowed) = upload_fixture();
+        let outside = root.join("secret.txt");
+        let (bytes, _) = read_attachment_file(outside.to_str().unwrap(), None).unwrap();
+        assert_eq!(bytes, b"secret");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

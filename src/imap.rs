@@ -1365,6 +1365,7 @@ mod tests {
             cursor_ttl_seconds: 600,
             cursor_max_entries: 128,
             attachment_download_dir: None,
+            attachment_upload_dir: None,
         }
     }
 
@@ -1389,6 +1390,7 @@ mod tests {
             cursor_ttl_seconds: 600,
             cursor_max_entries: 128,
             attachment_download_dir: None,
+            attachment_upload_dir: None,
         }
     }
 
