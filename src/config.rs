@@ -581,19 +581,18 @@ fn required_smtp_env(key: &str, account_id: &str) -> AppResult<String> {
 /// Lightweight format check for a `FROM_EMAIL` value.
 ///
 /// Rejects obviously malformed addresses (missing `@`, embedded whitespace,
-/// no dot in the domain, empty local part, multiple `@`) at startup so a
-/// typo doesn't surface only on the first send. Intentionally permissive on
-/// everything else — this is a sanity gate, not an RFC 5322 validator.
+/// empty local part, multiple `@`) at startup so a typo doesn't surface only
+/// on the first send. Intentionally permissive on everything else — this is a
+/// sanity gate, not an RFC 5322 validator. Dotless hostnames (e.g.
+/// `user@localhost`, `alerts@intranet`) are accepted because they are
+/// legitimate on corporate internal relays.
 fn is_valid_email(value: &str) -> bool {
     let at = value.matches('@').count();
     if at != 1 {
         return false;
     }
     let (local, domain) = value.split_once('@').unwrap();
-    !local.is_empty()
-        && !domain.is_empty()
-        && domain.contains('.')
-        && !value.contains(char::is_whitespace)
+    !local.is_empty() && !domain.is_empty() && !value.contains(char::is_whitespace)
 }
 
 /// Read a required OAuth2 environment variable, with a clear error message.
@@ -944,9 +943,12 @@ mod tests {
     }
 
     #[test]
-    fn is_valid_email_rejects_missing_domain_dot() {
-        assert!(!is_valid_email("user@localhost"));
-        assert!(!is_valid_email("user@example"));
+    fn is_valid_email_accepts_dotless_internal_hosts() {
+        // Corporate internal relays use dotless hostnames — must not be
+        // rejected (see PR #29 follow-up comment).
+        assert!(is_valid_email("noreply@localhost"));
+        assert!(is_valid_email("alerts@intranet"));
+        assert!(is_valid_email("user@example"));
     }
 
     #[test]
