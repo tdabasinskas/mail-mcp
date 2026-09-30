@@ -488,6 +488,10 @@ binary stays out of the response. Set the default download directory with
 `MAIL_ATTACHMENT_DOWNLOAD_DIR` (falls back to the system temp dir), or pass
 `output_dir` per call.
 
+To limit which local files send tools may attach via `file_path`, set
+`MAIL_ATTACHMENT_UPLOAD_DIR`; paths outside it (including via `..` or
+symlinks) are rejected. See [docs/security.md](docs/security.md#outbound-attachment-scope).
+
 ### Bulk Operations (2 tools)
 
 | Tool | What it does |
