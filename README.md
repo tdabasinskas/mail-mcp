@@ -15,6 +15,29 @@
 
 Most email MCP servers only do IMAP reads. This one does **everything**: read, search, send, reply, forward, bulk operations, Microsoft Graph API, and Exchange Web Services — with real OAuth2, multi-account, and multi-provider support. Written in Rust for speed and safety.
 
+## What's New in v0.4.14
+
+Community release — both changes came from external contributors. Thank you!
+
+- **New: `MAIL_ATTACHMENT_UPLOAD_DIR` — confine outbound `file_path`
+  attachments** by [@mjones-PL](https://github.com/mjones-PL) in
+  [#31](https://github.com/tecnologicachile/mail-mcp/pull/31), closing
+  [#11](https://github.com/tecnologicachile/mail-mcp/issues/11). Without a
+  restriction, send tools would read any file the server process can access —
+  a prompt-injected model could exfiltrate SSH keys or `.env` files as
+  attachments. Set this variable to a directory and every `file_path` is
+  canonicalized (`..` and symlinks resolved) and must land inside it; missing
+  and out-of-scope files return the same error so the check cannot probe for
+  file existence. Opt-in: when unset, behavior is unchanged. See
+  `docs/security.md#outbound-attachment-scope`.
+- **Fixed: `FROM_EMAIL` validation no longer rejects dotless internal hosts**
+  by [@arwack](https://github.com/arwack) in
+  [#30](https://github.com/tecnologicachile/mail-mcp/pull/30). Addresses the
+  v0.4.13 upgrade caveat: `noreply@localhost` / `alerts@intranet` style
+  addresses on corporate internal relays are accepted again, while the real
+  typo checks (multiple `@`, whitespace, empty local part) remain. If you held
+  the v0.4.13 upgrade because of this, v0.4.14 is safe.
+
 ## What's New in v0.4.13
 
 - **`effective_from()` helper + `FROM_EMAIL` startup validation** by
