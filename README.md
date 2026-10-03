@@ -768,6 +768,8 @@ the `publish-npm` job in `release.yml`.
 
 Contributions welcome! Check out the [issues](https://github.com/tecnologicachile/mail-mcp/issues) for good first issues.
 
+If mail-mcp is useful to you, a ⭐ on the repo helps others discover it.
+
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.

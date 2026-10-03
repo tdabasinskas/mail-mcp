@@ -89,7 +89,7 @@ The repository includes a minimal multi-stage Dockerfile for running the MCP ser
 - If dependencies require a non-scratch runtime, document why in the PR/commit message.
 - Keep `.dockerignore` aligned with repo layout to avoid leaking local files and reduce context size.
 - Docker publish workflow: `.github/workflows/publish-docker.yml`.
-- Docker publish trigger: git tags matching `v*.*.*`.
+- Docker publish trigger: manual only (`workflow_dispatch`); after tagging a release, run it against the tag (e.g. `gh workflow run "Publish Docker Image" --ref vX.Y.Z`).
 - Published image tags include `latest`, `vX.Y.Z`, and `X.Y.Z` on GHCR.
 
 ## NPM / NPX Distribution
@@ -131,7 +131,7 @@ The repository publishes GitHub Release archives/installers via cargo-dist.
 
 ### Tag Publish Flow
 
-- `release.yml` and `publish-docker.yml` run on `v*.*.*` tags.
+- `release.yml` runs on `v*.*.*` tags; `publish-docker.yml` is manual (`workflow_dispatch`) and must be run against the tag afterwards.
 - Keep package versions, dist artifacts, and release tags aligned.
 - If release automation changes, update `README.md` install commands and this file together.
 
