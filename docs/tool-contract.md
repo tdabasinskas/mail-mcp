@@ -361,6 +361,13 @@ Server-wide:
 - `MAIL_IMAP_GREETING_TIMEOUT_MS` (default `15000`)
 - `MAIL_IMAP_SOCKET_TIMEOUT_MS` (default `300000`)
 
+Transport (see `docs/advanced-configuration.md#remote-http-transport`):
+
+- `MAIL_MCP_TRANSPORT` (default `stdio`; `http` serves MCP streamable HTTP)
+- `MAIL_MCP_HTTP_HOST` (default `127.0.0.1`)
+- `MAIL_MCP_HTTP_PORT` (default `8000`)
+- `MAIL_MCP_HTTP_PATH` (default `/mcp`)
+
 ## Implementation Notes for Next Artifact
 
 Next artifact will generate Rust types and schema definitions from this contract, then register all tools in an `rmcp` stdio server skeleton with unified error handling.

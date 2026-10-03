@@ -84,7 +84,7 @@ The repository includes a minimal multi-stage Dockerfile for running the MCP ser
 
 ### Docker Notes for Agents
 
-- Keep MCP transport as stdio (do not add HTTP listener behavior by default).
+- Keep MCP transport as stdio by default. An opt-in streamable HTTP transport exists (`MAIL_MCP_TRANSPORT=http`, see `src/http.rs` and `docs/advanced-configuration.md`); never make it the default or enable it implicitly in Docker.
 - Keep runtime image minimal (current pattern: builder image + `scratch`).
 - If dependencies require a non-scratch runtime, document why in the PR/commit message.
 - Keep `.dockerignore` aligned with repo layout to avoid leaking local files and reduce context size.
