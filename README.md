@@ -15,6 +15,20 @@
 
 Most email MCP servers only do IMAP reads. This one does **everything**: read, search, send, reply, forward, bulk operations, Microsoft Graph API, and Exchange Web Services — with real OAuth2, multi-account, and multi-provider support. Written in Rust for speed and safety.
 
+## What's New in v0.4.15
+
+- **New: opt-in streamable HTTP transport** by
+  [@tdabasinskas](https://github.com/tdabasinskas) in
+  [#32](https://github.com/tecnologicachile/mail-mcp/pull/32). Set
+  `MAIL_MCP_TRANSPORT=http` to serve MCP streamable HTTP (stateless) instead
+  of stdio — useful for running the server on another machine behind an MCP
+  gateway. Binds to `127.0.0.1:8000` at `/mcp` by default, configurable via
+  `MAIL_MCP_HTTP_HOST` / `MAIL_MCP_HTTP_PORT` / `MAIL_MCP_HTTP_PATH`, with
+  graceful shutdown on SIGINT/SIGTERM. **The endpoint has no built-in
+  authentication** — keep it on loopback or behind an authenticating gateway;
+  see `docs/advanced-configuration.md#remote-http-transport`. stdio remains
+  the default: nothing changes unless the variable is set.
+
 ## What's New in v0.4.14
 
 Community release — both changes came from external contributors. Thank you!
