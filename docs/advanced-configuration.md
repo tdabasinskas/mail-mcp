@@ -261,6 +261,29 @@ MAIL_IMAP_CURSOR_TTL_SECONDS=300
 MAIL_IMAP_SOCKET_TIMEOUT_MS=180000
 ```
 
+## Remote HTTP Transport
+
+By default the server speaks MCP over stdio and is spawned by the client. To
+run it on another machine — for example next to an MCP gateway that several
+clients share — serve MCP streamable HTTP instead:
+
+```bash
+MAIL_MCP_TRANSPORT=http        # default: stdio
+MAIL_MCP_HTTP_HOST=0.0.0.0     # default: 127.0.0.1
+MAIL_MCP_HTTP_PORT=8000        # default: 8000
+MAIL_MCP_HTTP_PATH=/mcp        # default: /mcp
+```
+
+The endpoint runs in stateless mode (no `Mcp-Session-Id`); all requests share
+one server instance, so pagination cursors and OAuth2 tokens persist across
+requests. SIGINT and SIGTERM shut it down gracefully.
+
+**The HTTP endpoint has no authentication.** Anyone who can reach it can read
+— and, with the write flags on, send and delete — mail with the configured
+accounts. Keep the loopback default unless the port is reachable only from
+something that authenticates callers: an MCP gateway with OAuth, a reverse
+proxy with auth, or a firewall that admits only that gateway.
+
 ## Docker-Specific Configuration
 
 When running in Docker, ensure environment variables are passed correctly:

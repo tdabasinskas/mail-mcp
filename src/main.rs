@@ -7,6 +7,7 @@
 //! # Architecture
 //!
 //! - [`main`]: Process entry point with env loading and stdio serving
+//! - [`http`]: Optional streamable HTTP transport (`MAIL_MCP_TRANSPORT=http`)
 //! - [`config`]: Environment-driven configuration for accounts and server settings
 //! - [`errors`]: Application error model with MCP error mapping
 //! - [`imap`]: IMAP transport/session operations with timeout wrappers
@@ -20,6 +21,7 @@ mod config;
 mod errors;
 mod ews;
 mod graph;
+mod http;
 mod imap;
 mod message_id;
 mod mime;
@@ -73,13 +75,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_writer(std::io::stderr)
         .init();
 
-    tracing::info!("starting MCP server transport=Stdio");
+    let transport = http::Transport::from_env()?;
+    // Resolve HTTP settings before connecting anywhere, so a bad address fails fast.
+    let http_settings = match transport {
+        http::Transport::Http => Some(http::HttpSettings::from_env()?),
+        http::Transport::Stdio => None,
+    };
+
+    tracing::info!("starting MCP server transport={transport:?}");
     let config = ServerConfig::load_from_env()?;
     let update_notice = check_for_updates().await;
-    let service = server::MailImapServer::new(config, update_notice)
-        .serve(stdio())
-        .await?;
-    service.waiting().await?;
+    let server = server::MailImapServer::new(config, update_notice);
+    match http_settings {
+        Some(settings) => http::serve(server, settings).await?,
+        None => {
+            let service = server.serve(stdio()).await?;
+            service.waiting().await?;
+        }
+    }
     Ok(())
 }
 

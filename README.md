@@ -578,6 +578,7 @@ Use `account_id` in tool calls: `"account_id": "gmail"`, `"account_id": "icloud"
 - **Bounded outputs** — body text, HTML, attachments truncated to configurable limits
 - **OAuth2 tokens cached** with 10-minute refresh margin
 - **No secrets in responses** — credentials never exposed via MCP tools
+- **HTTP transport is opt-in and unauthenticated** — stdio by default; `MAIL_MCP_TRANSPORT=http` binds to loopback unless told otherwise, and belongs behind an authenticating gateway
 
 ## Configuration Reference
 
@@ -647,6 +648,10 @@ Use `account_id` in tool calls: `"account_id": "gmail"`, `"account_id": "icloud"
 | `MAIL_IMAP_CONNECT_TIMEOUT_MS` | 30000 | TCP connection timeout |
 | `MAIL_IMAP_GREETING_TIMEOUT_MS` | 15000 | TLS/greeting timeout |
 | `MAIL_IMAP_SOCKET_TIMEOUT_MS` | 300000 | Socket I/O timeout |
+| `MAIL_MCP_TRANSPORT` | stdio | `stdio`, or `http` to serve MCP streamable HTTP (see [Remote HTTP transport](docs/advanced-configuration.md#remote-http-transport)) |
+| `MAIL_MCP_HTTP_HOST` | 127.0.0.1 | HTTP bind address (IP literal) |
+| `MAIL_MCP_HTTP_PORT` | 8000 | HTTP bind port |
+| `MAIL_MCP_HTTP_PATH` | /mcp | HTTP endpoint path |
 
 </details>
 
