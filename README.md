@@ -15,6 +15,18 @@
 
 Most email MCP servers only do IMAP reads. This one does **everything**: read, search, send, reply, forward, bulk operations, Microsoft Graph API, and Exchange Web Services — with real OAuth2, multi-account, and multi-provider support. Written in Rust for speed and safety.
 
+## What's New in v0.4.16
+
+- **`imap_list_mailboxes` cap is now configurable and visible** by
+  [@tdabasinskas](https://github.com/tdabasinskas) in
+  [#33](https://github.com/tecnologicachile/mail-mcp/pull/33). The tool used to
+  silently drop everything past 200 mailboxes — on accounts with more folders
+  (e.g. 217 on iCloud), folders like `Sent Messages` simply never appeared.
+  The cap is now set with `MAIL_IMAP_MAX_MAILBOXES` (default `200`, clamped to
+  `1..=10000`), and the response carries two additive fields, `total` and
+  `truncated`, so clients can always tell a capped list from a complete one.
+  Nothing changes unless the variable is set.
+
 ## What's New in v0.4.15
 
 - **New: opt-in streamable HTTP transport** by
