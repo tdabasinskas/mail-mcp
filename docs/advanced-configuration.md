@@ -30,6 +30,15 @@ MAIL_IMAP_CURSOR_MAX_ENTRIES=512
 - Lower limit: Less memory usage, cursors may expire sooner
 - Higher limit: Supports more concurrent searches, higher memory usage
 
+### Mailbox List Limit
+
+`imap_list_mailboxes` returns at most this many mailboxes. Accounts with a deep folder tree can exceed the default; the response's `total` and `truncated` fields show when that happens.
+
+```bash
+# Default: 200 (clamped to 1..=10000)
+MAIL_IMAP_MAX_MAILBOXES=1000
+```
+
 ## Timeout Configuration
 
 All timeouts are in milliseconds. Adjust based on network conditions and server performance.

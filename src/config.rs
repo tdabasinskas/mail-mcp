@@ -102,6 +102,9 @@ pub struct ServerConfig {
     pub cursor_ttl_seconds: u64,
     /// Maximum number of cursors to retain (LRU eviction when exceeded)
     pub cursor_max_entries: usize,
+    /// Maximum number of mailboxes `imap_list_mailboxes` returns
+    /// (`MAIL_IMAP_MAX_MAILBOXES`, clamped to `1..=MAX_MAILBOXES_LIMIT`)
+    pub max_mailboxes: usize,
     /// Default directory where `imap_get_attachment` saves downloaded
     /// attachments. `None` = fall back to the system temp dir. A per-call
     /// `output_dir` argument overrides this.
@@ -190,6 +193,10 @@ impl ServerConfig {
             socket_timeout_ms: parse_u64_env("MAIL_IMAP_SOCKET_TIMEOUT_MS", 300_000)?,
             cursor_ttl_seconds: parse_u64_env("MAIL_IMAP_CURSOR_TTL_SECONDS", 600)?,
             cursor_max_entries: parse_usize_env("MAIL_IMAP_CURSOR_MAX_ENTRIES", 512)?,
+            max_mailboxes: clamp_max_mailboxes(parse_usize_env(
+                "MAIL_IMAP_MAX_MAILBOXES",
+                DEFAULT_MAX_MAILBOXES,
+            )?),
             attachment_download_dir: env::var("MAIL_ATTACHMENT_DOWNLOAD_DIR")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
@@ -759,6 +766,17 @@ fn parse_u64_env(key: &str, default: u64) -> AppResult<u64> {
     }
 }
 
+/// Default for `MAIL_IMAP_MAX_MAILBOXES` (the historical fixed limit).
+pub const DEFAULT_MAX_MAILBOXES: usize = 200;
+
+/// Upper bound for `MAIL_IMAP_MAX_MAILBOXES`, keeping responses bounded.
+pub const MAX_MAILBOXES_LIMIT: usize = 10_000;
+
+/// Clamp a configured mailbox limit to `1..=MAX_MAILBOXES_LIMIT`.
+fn clamp_max_mailboxes(n: usize) -> usize {
+    n.clamp(1, MAX_MAILBOXES_LIMIT)
+}
+
 /// Parse a `usize` environment variable with default fallback
 ///
 /// Returns `default` if unset.
@@ -807,8 +825,9 @@ fn resolve_smtp_send_timeout(new_var: Option<u64>, legacy_var: Option<u64>) -> u
 #[cfg(test)]
 mod tests {
     use super::{
-        AuthMethod, ServerConfig, is_valid_email, parse_bool_value, parse_upload_dir,
-        provider_auto_saves_sent, resolve_smtp_send_timeout,
+        AuthMethod, DEFAULT_MAX_MAILBOXES, MAX_MAILBOXES_LIMIT, ServerConfig, clamp_max_mailboxes,
+        is_valid_email, parse_bool_value, parse_upload_dir, provider_auto_saves_sent,
+        resolve_smtp_send_timeout,
     };
     use crate::smtp::{SmtpAccountConfig, SmtpSecurity};
     use std::collections::{BTreeMap, HashMap};
@@ -854,6 +873,7 @@ mod tests {
             socket_timeout_ms: 15_000,
             cursor_ttl_seconds: 600,
             cursor_max_entries: 512,
+            max_mailboxes: DEFAULT_MAX_MAILBOXES,
             attachment_download_dir: None,
             attachment_upload_dir: None,
         }
@@ -1013,5 +1033,13 @@ mod tests {
     fn is_valid_email_rejects_empty_local_part() {
         assert!(!is_valid_email("@example.com"));
         assert!(!is_valid_email(""));
+    }
+
+    #[test]
+    fn max_mailboxes_is_clamped() {
+        assert_eq!(DEFAULT_MAX_MAILBOXES, 200);
+        assert_eq!(clamp_max_mailboxes(0), 1);
+        assert_eq!(clamp_max_mailboxes(1000), 1000);
+        assert_eq!(clamp_max_mailboxes(usize::MAX), MAX_MAILBOXES_LIMIT);
     }
 }

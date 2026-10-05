@@ -662,6 +662,7 @@ Use `account_id` in tool calls: `"account_id": "gmail"`, `"account_id": "icloud"
 | `MAIL_IMAP_CONNECT_TIMEOUT_MS` | 30000 | TCP connection timeout |
 | `MAIL_IMAP_GREETING_TIMEOUT_MS` | 15000 | TLS/greeting timeout |
 | `MAIL_IMAP_SOCKET_TIMEOUT_MS` | 300000 | Socket I/O timeout |
+| `MAIL_IMAP_MAX_MAILBOXES` | 200 | Max mailboxes `imap_list_mailboxes` returns (1–10000); the response reports `total` and `truncated` |
 | `MAIL_MCP_TRANSPORT` | stdio | `stdio`, or `http` to serve MCP streamable HTTP (see [Remote HTTP transport](docs/advanced-configuration.md#remote-http-transport)) |
 | `MAIL_MCP_HTTP_HOST` | 127.0.0.1 | HTTP bind address (IP literal) |
 | `MAIL_MCP_HTTP_PORT` | 8000 | HTTP bind port |

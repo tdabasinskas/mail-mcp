@@ -233,6 +233,9 @@ The repository publishes GitHub Release archives/installers via cargo-dist.
   shared/group mailboxes where auth uses a personal account but the From
   should be the group address), set this to the group address. When unset,
   the From address defaults to `_USER`. Affects send, reply, and forward.
+- `MAIL_IMAP_MAX_MAILBOXES`: cap on how many mailboxes `imap_list_mailboxes`
+  returns (default `200`, clamped to `1..=10000`). The response always carries
+  `total` and `truncated`, so a client can tell a capped list from a complete one.
 
 ## Quick Pre-Commit Checklist
 
