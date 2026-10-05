@@ -242,7 +242,9 @@ impl MailImapServer {
 
     /// Tool: List mailboxes for an account
     ///
-    /// Returns up to 200 visible mailboxes/folders.
+    /// Returns up to `MAIL_IMAP_MAX_MAILBOXES` (default 200) visible
+    /// mailboxes/folders, with `total` and `truncated` so callers can tell
+    /// when the list is incomplete.
     #[tool(
         name = "imap_list_mailboxes",
         description = "List mailboxes for an account"
@@ -1179,14 +1181,14 @@ impl MailImapServer {
             }
         };
 
-        let mailboxes = items
+        let all = items
             .into_iter()
-            .take(200)
             .map(|item| MailboxInfo {
                 name: item.name().to_owned(),
                 delimiter: item.delimiter().map(|d| d.to_string()),
             })
             .collect::<Vec<_>>();
+        let (mailboxes, total, truncated) = cap_mailboxes(all, self.config.max_mailboxes);
 
         let status = status_from_counts(issues.is_empty(), !mailboxes.is_empty());
         log_runtime_issues(
@@ -1206,6 +1208,8 @@ impl MailImapServer {
             "next_action": next_action,
             "account_id": account.account_id,
             "mailboxes": mailboxes,
+            "total": total,
+            "truncated": truncated,
         }))
     }
 
@@ -4556,11 +4560,20 @@ fn parse_bulk_message_ids(account_id: &str, message_ids: &[String]) -> AppResult
     })
 }
 
+/// Keep at most `max` mailboxes, reporting the full count and whether any
+/// were dropped so callers never mistake a truncated list for a complete one.
+fn cap_mailboxes(mut all: Vec<MailboxInfo>, max: usize) -> (Vec<MailboxInfo>, usize, bool) {
+    let total = all.len();
+    all.truncate(max);
+    let truncated = total > all.len();
+    (all, total, truncated)
+}
+
 #[cfg(test)]
 /// Tests for server-side validation and encoding helpers.
 mod tests {
     use super::{
-        encode_raw_source_base64, escape_imap_quoted, read_attachment_file,
+        cap_mailboxes, encode_raw_source_base64, escape_imap_quoted, read_attachment_file,
         sanitize_attachment_filename, select_attachment, validate_email_no_wrapper_leak,
         validate_flag, validate_mailbox, validate_search_text,
     };
@@ -4825,5 +4838,30 @@ mod tests {
             "<p>El XML tiene <code>&lt;parameter name=\"timeout\"&gt;</code> en la config.</p>",
         )
         .expect("generic <parameter> mention must pass");
+    }
+
+    #[test]
+    fn cap_mailboxes_reports_total_and_truncation() {
+        let boxes = |n: usize| {
+            (0..n)
+                .map(|i| crate::models::MailboxInfo {
+                    name: format!("Folder{i}"),
+                    delimiter: Some("/".to_owned()),
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let (kept, total, truncated) = cap_mailboxes(boxes(217), 200);
+        assert_eq!((kept.len(), total, truncated), (200, 217, true));
+        assert_eq!(kept[0].name, "Folder0");
+
+        let (kept, total, truncated) = cap_mailboxes(boxes(217), 1000);
+        assert_eq!((kept.len(), total, truncated), (217, 217, false));
+
+        let (kept, total, truncated) = cap_mailboxes(boxes(200), 200);
+        assert_eq!((kept.len(), total, truncated), (200, 200, false));
+
+        let (kept, total, truncated) = cap_mailboxes(Vec::new(), 200);
+        assert_eq!((kept.len(), total, truncated), (0, 0, false));
     }
 }

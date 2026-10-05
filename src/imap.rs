@@ -1364,6 +1364,7 @@ mod tests {
             socket_timeout_ms: 15_000,
             cursor_ttl_seconds: 600,
             cursor_max_entries: 128,
+            max_mailboxes: crate::config::DEFAULT_MAX_MAILBOXES,
             attachment_download_dir: None,
             attachment_upload_dir: None,
         }
@@ -1389,6 +1390,7 @@ mod tests {
             socket_timeout_ms: 5_000,
             cursor_ttl_seconds: 600,
             cursor_max_entries: 128,
+            max_mailboxes: crate::config::DEFAULT_MAX_MAILBOXES,
             attachment_download_dir: None,
             attachment_upload_dir: None,
         }

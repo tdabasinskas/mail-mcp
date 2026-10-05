@@ -123,7 +123,9 @@ Output `data`:
 - `issues`: array of diagnostic issues
 - `next_action`: `{ instruction, tool, arguments }`
 - `account_id`
-- `mailboxes`: array (max 200) of `{ name, delimiter? }`
+- `mailboxes`: array (max `MAIL_IMAP_MAX_MAILBOXES`, default 200) of `{ name, delimiter? }`
+- `total`: number of mailboxes the server listed before the cap
+- `truncated`: `true` when `total` exceeds the cap and some mailboxes are not returned
 
 ### 4) `imap_search_messages`
 
@@ -360,6 +362,7 @@ Server-wide:
 - `MAIL_IMAP_CONNECT_TIMEOUT_MS` (default `30000`)
 - `MAIL_IMAP_GREETING_TIMEOUT_MS` (default `15000`)
 - `MAIL_IMAP_SOCKET_TIMEOUT_MS` (default `300000`)
+- `MAIL_IMAP_MAX_MAILBOXES` (default `200`, clamped to `1..=10000`): cap for `imap_list_mailboxes`
 
 Transport (see `docs/advanced-configuration.md#remote-http-transport`):
 
