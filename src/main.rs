@@ -7,6 +7,7 @@
 //! # Architecture
 //!
 //! - [`main`]: Process entry point with env loading and stdio serving
+//! - [`http`]: Optional streamable HTTP transport (`MAIL_MCP_TRANSPORT=http`)
 //! - [`config`]: Environment-driven configuration for accounts and server settings
 //! - [`errors`]: Application error model with MCP error mapping
 //! - [`imap`]: IMAP transport/session operations with timeout wrappers
@@ -20,6 +21,7 @@ mod config;
 mod errors;
 mod ews;
 mod graph;
+mod http;
 mod imap;
 mod message_id;
 mod mime;
@@ -69,17 +71,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(log_filter(std::env::var("RUST_LOG").ok().as_deref()))
         .with_writer(std::io::stderr)
         .init();
 
-    tracing::info!("starting MCP server transport=Stdio");
+    let transport = http::Transport::from_env()?;
+    // Resolve HTTP settings before connecting anywhere, so a bad address fails fast.
+    let http_settings = match transport {
+        http::Transport::Http => Some(http::HttpSettings::from_env()?),
+        http::Transport::Stdio => None,
+    };
+
+    tracing::info!("starting MCP server transport={transport:?}");
     let config = ServerConfig::load_from_env()?;
     let update_notice = check_for_updates().await;
-    let service = server::MailImapServer::new(config, update_notice)
-        .serve(stdio())
-        .await?;
-    service.waiting().await?;
+    let server = server::MailImapServer::new(config, update_notice);
+    match http_settings {
+        Some(settings) => http::serve(server, settings).await?,
+        None => {
+            let service = server.serve(stdio()).await?;
+            service.waiting().await?;
+        }
+    }
     Ok(())
 }
 
@@ -129,6 +142,35 @@ async fn check_for_updates() -> Option<String> {
             None
         }
     }
+}
+
+/// Build the log filter from `RUST_LOG`.
+///
+/// At `info`, rmcp logs every JSON-RPC response in full, which includes
+/// message subjects and bodies. When `RUST_LOG` sets a global level of
+/// `info` or more verbose without naming rmcp, rmcp is capped at `warn`.
+fn log_filter(rust_log: Option<&str>) -> EnvFilter {
+    let filter = EnvFilter::new(rust_log.unwrap_or_default());
+    if !caps_rmcp(rust_log) {
+        return filter;
+    }
+    match "rmcp=warn".parse() {
+        Ok(directive) => filter.add_directive(directive),
+        Err(_) => filter,
+    }
+}
+
+fn caps_rmcp(rust_log: Option<&str>) -> bool {
+    let Some(value) = rust_log else {
+        return false;
+    };
+    let directives: Vec<&str> = value.split(',').map(str::trim).collect();
+    if directives.iter().any(|d| d.starts_with("rmcp")) {
+        return false;
+    }
+    directives
+        .iter()
+        .any(|d| matches!(d.to_ascii_lowercase().as_str(), "info" | "debug" | "trace"))
 }
 
 fn should_print_help<I>(args: I) -> bool
@@ -252,6 +294,7 @@ fn build_help_output(env_map: &BTreeMap<String, String>) -> String {
     out.push_str("  MAIL_SMTP_SAVE_SENT=true\n");
     out.push_str("  MAIL_SMTP_CONNECT_TIMEOUT_MS=30000\n");
     out.push_str("  MAIL_SMTP_SEND_TIMEOUT_MS=300000\n");
+    out.push_str("  MAIL_ATTACHMENT_UPLOAD_DIR=<unset: file_path attachments unrestricted>\n");
     out.push_str("  # MAIL_SMTP_TIMEOUT_MS (deprecated; use MAIL_SMTP_SEND_TIMEOUT_MS)\n\n");
 
     out.push_str("Send/write gate policy\n");
@@ -349,9 +392,30 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        build_help_output, discover_account_sections, is_secret_key, redact_value,
-        should_print_help,
+        build_help_output, caps_rmcp, discover_account_sections, is_secret_key, log_filter,
+        redact_value, should_print_help,
     };
+
+    #[test]
+    fn rmcp_is_capped_only_for_verbose_global_levels() {
+        for value in [
+            None,
+            Some("error"),
+            Some("warn"),
+            Some("off"),
+            Some("mail_mcp=debug"),
+        ] {
+            assert!(!caps_rmcp(value), "{value:?}");
+            assert!(!log_filter(value).to_string().contains("rmcp=warn"));
+        }
+        for value in ["info", "debug", "INFO,mail_mcp=debug", "trace"] {
+            assert!(caps_rmcp(Some(value)), "{value}");
+            assert!(log_filter(Some(value)).to_string().contains("rmcp=warn"));
+        }
+        for value in ["info,rmcp=info", "debug, rmcp::transport=debug"] {
+            assert!(!caps_rmcp(Some(value)), "{value}");
+        }
+    }
 
     #[test]
     fn detects_short_and_long_help_flags() {
